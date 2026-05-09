@@ -136,19 +136,19 @@ class PipelineService:
                 pass
 
             # Render targets
-                try:
-                    render_targets = pipe.GetOutputTargets()
-                    rts = []
-                    for i, rt in enumerate(render_targets):
-                        if rt.resourceId != rd.ResourceId.Null():
-                            rts.append({"index": i, "resource_id": str(rt.resourceId)})
-                    pipeline_info["render_targets"] = rts
+            try:
+                render_targets = pipe.GetOutputTargets()
+                rts = []
+                for i, rt in enumerate(render_targets):
+                    if rt.resourceId != rd.ResourceId.Null():
+                        rts.append({"index": i, "resource_id": str(rt.resourceId)})
+                pipeline_info["render_targets"] = rts
 
-                    depth_target = pipe.GetDepthTarget()
-                    if depth_target.resourceId != rd.ResourceId.Null():
-                        pipeline_info["depth_target"] = str(depth_target.resourceId)
-                except Exception:
-                    pass
+                depth_target = pipe.GetDepthTarget()
+                if depth_target.resourceId != rd.ResourceId.Null():
+                    pipeline_info["depth_target"] = str(depth_target.resourceId)
+            except Exception:
+                pass
 
             # Input assembly
             try:
@@ -167,136 +167,129 @@ class PipelineService:
         return result["pipeline"]
 
     def _get_stage_resources(self, controller, pipe, stage, reflection):
-        """Get shader resource views (SRVs) for a stage"""
+        """Get shader resource views (SRVs) for a stage (RenderDoc 1.13 API)"""
         resources = []
         try:
             srvs = pipe.GetReadOnlyResources(stage, False)
 
-            name_map = {}
-            if reflection:
-                for res in reflection.readOnlyResources:
-                    name_map[res.fixedBindNumber] = res.name
+            # Build (bindset, bind) -> name map via BindpointMapping.
+            # In 1.13, ShaderResource.bindPoint is an index into
+            # ShaderBindpointMapping.readOnlyResources, which holds the real Bindpoint.
+            name_by_bp = {}
+            try:
+                mapping = pipe.GetBindpointMapping(stage)
+                if reflection and mapping:
+                    ro_map = mapping.readOnlyResources
+                    for i, res in enumerate(reflection.readOnlyResources):
+                        if i < len(ro_map):
+                            bp = ro_map[i]
+                            name_by_bp[(bp.bindset, bp.bind)] = res.name
+            except Exception:
+                pass
 
-            for srv in srvs:
-                if srv.descriptor.resource == rd.ResourceId.Null():
-                    continue
-
-                slot = srv.access.index
-                res_info = {
-                    "slot": slot,
-                    "name": name_map.get(slot, ""),
-                    "resource_id": str(srv.descriptor.resource),
-                }
-
-                res_info.update(
-                    self._get_resource_details(controller, srv.descriptor.resource)
-                )
-
-                res_info["first_mip"] = srv.descriptor.firstMip
-                res_info["num_mips"] = srv.descriptor.numMips
-                res_info["first_slice"] = srv.descriptor.firstSlice
-                res_info["num_slices"] = srv.descriptor.numSlices
-
-                resources.append(res_info)
+            for arr in srvs:
+                bp = arr.bindPoint
+                key = (bp.bindset, bp.bind)
+                name = name_by_bp.get(key, "")
+                for res in arr.resources:
+                    if res.resourceId == rd.ResourceId.Null():
+                        continue
+                    res_info = {
+                        "bindset": bp.bindset,
+                        "slot": bp.bind,
+                        "name": name,
+                        "resource_id": str(res.resourceId),
+                        "first_mip": res.firstMip,
+                        "first_slice": res.firstSlice,
+                    }
+                    res_info.update(
+                        self._get_resource_details(controller, res.resourceId)
+                    )
+                    resources.append(res_info)
         except Exception as e:
             resources.append({"error": str(e)})
 
         return resources
 
     def _get_stage_uavs(self, controller, pipe, stage, reflection):
-        """Get unordered access views (UAVs) for a stage"""
+        """Get unordered access views (UAVs) for a stage (RenderDoc 1.13 API)"""
         uavs = []
         try:
             uav_list = pipe.GetReadWriteResources(stage, False)
 
-            name_map = {}
-            if reflection:
-                for res in reflection.readWriteResources:
-                    name_map[res.fixedBindNumber] = res.name
+            name_by_bp = {}
+            try:
+                mapping = pipe.GetBindpointMapping(stage)
+                if reflection and mapping:
+                    rw_map = mapping.readWriteResources
+                    for i, res in enumerate(reflection.readWriteResources):
+                        if i < len(rw_map):
+                            bp = rw_map[i]
+                            name_by_bp[(bp.bindset, bp.bind)] = res.name
+            except Exception:
+                pass
 
-            for uav in uav_list:
-                if uav.descriptor.resource == rd.ResourceId.Null():
-                    continue
-
-                slot = uav.access.index
-                uav_info = {
-                    "slot": slot,
-                    "name": name_map.get(slot, ""),
-                    "resource_id": str(uav.descriptor.resource),
-                }
-
-                uav_info.update(
-                    self._get_resource_details(controller, uav.descriptor.resource)
-                )
-
-                uav_info["first_element"] = uav.descriptor.firstMip
-                uav_info["num_elements"] = uav.descriptor.numMips
-
-                uavs.append(uav_info)
+            for arr in uav_list:
+                bp = arr.bindPoint
+                key = (bp.bindset, bp.bind)
+                name = name_by_bp.get(key, "")
+                for res in arr.resources:
+                    if res.resourceId == rd.ResourceId.Null():
+                        continue
+                    uav_info = {
+                        "bindset": bp.bindset,
+                        "slot": bp.bind,
+                        "name": name,
+                        "resource_id": str(res.resourceId),
+                        "first_mip": res.firstMip,
+                        "first_slice": res.firstSlice,
+                    }
+                    uav_info.update(
+                        self._get_resource_details(controller, res.resourceId)
+                    )
+                    uavs.append(uav_info)
         except Exception as e:
             uavs.append({"error": str(e)})
 
         return uavs
 
     def _get_stage_samplers(self, pipe, stage, reflection):
-        """Get samplers for a stage"""
+        """Get samplers for a stage (RenderDoc 1.13 API)
+
+        Note: 1.13's GetSamplers takes only the stage argument, and the returned
+        BoundResourceArray.resources items are BoundResource entries that only
+        carry resourceId (no descriptor with addressU/filter/etc.). For full
+        sampler descriptor access on 1.13 the API-specific pipeline state
+        (D3D11Pipe / VKPipe / GLPipe) is required, which is intentionally not
+        attempted here to keep this generic.
+        """
         samplers = []
         try:
-            sampler_list = pipe.GetSamplers(stage, False)
+            sampler_list = pipe.GetSamplers(stage)
 
-            name_map = {}
-            if reflection:
-                for samp in reflection.samplers:
-                    name_map[samp.fixedBindNumber] = samp.name
+            name_by_bp = {}
+            try:
+                mapping = pipe.GetBindpointMapping(stage)
+                if reflection and mapping:
+                    samp_map = mapping.samplers
+                    for i, samp in enumerate(reflection.samplers):
+                        if i < len(samp_map):
+                            bp = samp_map[i]
+                            name_by_bp[(bp.bindset, bp.bind)] = samp.name
+            except Exception:
+                pass
 
-            for samp in sampler_list:
-                slot = samp.access.index
-                samp_info = {
-                    "slot": slot,
-                    "name": name_map.get(slot, ""),
-                }
-
-                desc = samp.descriptor
-                try:
-                    samp_info["address_u"] = str(desc.addressU)
-                    samp_info["address_v"] = str(desc.addressV)
-                    samp_info["address_w"] = str(desc.addressW)
-                except AttributeError:
-                    pass
-
-                try:
-                    samp_info["filter"] = str(desc.filter)
-                except AttributeError:
-                    pass
-
-                try:
-                    samp_info["max_anisotropy"] = desc.maxAnisotropy
-                except AttributeError:
-                    pass
-
-                try:
-                    samp_info["min_lod"] = desc.minLOD
-                    samp_info["max_lod"] = desc.maxLOD
-                    samp_info["mip_lod_bias"] = desc.mipLODBias
-                except AttributeError:
-                    pass
-
-                try:
-                    samp_info["border_color"] = [
-                        desc.borderColor[0],
-                        desc.borderColor[1],
-                        desc.borderColor[2],
-                        desc.borderColor[3],
-                    ]
-                except (AttributeError, TypeError):
-                    pass
-
-                try:
-                    samp_info["compare_function"] = str(desc.compareFunction)
-                except AttributeError:
-                    pass
-
-                samplers.append(samp_info)
+            for arr in sampler_list:
+                bp = arr.bindPoint
+                key = (bp.bindset, bp.bind)
+                name = name_by_bp.get(key, "")
+                for res in arr.resources:
+                    samplers.append({
+                        "bindset": bp.bindset,
+                        "slot": bp.bind,
+                        "name": name,
+                        "sampler_id": str(res.resourceId),
+                    })
         except Exception as e:
             samplers.append({"error": str(e)})
 
@@ -310,6 +303,7 @@ class PipelineService:
                 return cbuffers
 
             for cb in reflection.constantBlocks:
+                # 1.13: ConstantBlock.bindPoint is int32 (mapping index)
                 slot = cb.bindPoint if hasattr(cb, 'bindPoint') else cb.fixedBindNumber
                 cb_info = {
                     "slot": slot,
@@ -320,10 +314,19 @@ class PipelineService:
                 }
                 if cb.variables:
                     for var in cb.variables:
+                        # 1.13: ShaderConstantType has no 'name'; use type.descriptor.name
+                        type_name = ""
+                        try:
+                            type_name = var.type.descriptor.name
+                        except AttributeError:
+                            try:
+                                type_name = var.type.name
+                            except AttributeError:
+                                pass
                         cb_info["variables"].append({
                             "name": var.name,
                             "byte_offset": var.byteOffset,
-                            "type": str(var.type.name) if var.type else "",
+                            "type": str(type_name) if type_name else "",
                         })
                 cbuffers.append(cb_info)
 
@@ -407,7 +410,7 @@ class PipelineService:
                     {
                         "name": res.name,
                         "type": str(res.resType),
-                        "binding": res.fixedBindNumber,
+                        "binding": res.bindPoint,
                         "access": "ReadOnly",
                     }
                 )
@@ -420,7 +423,7 @@ class PipelineService:
                     {
                         "name": res.name,
                         "type": str(res.resType),
-                        "binding": res.fixedBindNumber,
+                        "binding": res.bindPoint,
                         "access": "ReadWrite",
                     }
                 )
