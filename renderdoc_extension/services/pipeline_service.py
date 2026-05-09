@@ -1,4 +1,4 @@
-"""
+﻿"""
 Pipeline state service for RenderDoc.
 """
 
@@ -136,19 +136,19 @@ class PipelineService:
                 pass
 
             # Render targets
-            try:
-                om = pipe.GetOutputMerger()
-                if om:
+                try:
+                    render_targets = pipe.GetOutputTargets()
                     rts = []
-                    for i, rt in enumerate(om.renderTargets):
+                    for i, rt in enumerate(render_targets):
                         if rt.resourceId != rd.ResourceId.Null():
                             rts.append({"index": i, "resource_id": str(rt.resourceId)})
                     pipeline_info["render_targets"] = rts
 
-                    if om.depthTarget.resourceId != rd.ResourceId.Null():
-                        pipeline_info["depth_target"] = str(om.depthTarget.resourceId)
-            except Exception:
-                pass
+                    depth_target = pipe.GetDepthTarget()
+                    if depth_target.resourceId != rd.ResourceId.Null():
+                        pipeline_info["depth_target"] = str(depth_target.resourceId)
+                except Exception:
+                    pass
 
             # Input assembly
             try:

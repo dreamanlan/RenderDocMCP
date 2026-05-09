@@ -1,4 +1,4 @@
-"""
+﻿"""
 Serialization utility functions for RenderDoc data types.
 """
 
@@ -10,28 +10,28 @@ class Serializers:
 
     @staticmethod
     def serialize_flags(flags):
-        """Convert ActionFlags to list of strings"""
+        """Convert DrawFlags to list of strings"""
         flag_names = []
         flag_map = [
-            (rd.ActionFlags.Drawcall, "Drawcall"),
-            (rd.ActionFlags.Dispatch, "Dispatch"),
-            (rd.ActionFlags.Clear, "Clear"),
-            (rd.ActionFlags.PushMarker, "PushMarker"),
-            (rd.ActionFlags.PopMarker, "PopMarker"),
-            (rd.ActionFlags.SetMarker, "SetMarker"),
-            (rd.ActionFlags.Present, "Present"),
-            (rd.ActionFlags.Copy, "Copy"),
-            (rd.ActionFlags.Resolve, "Resolve"),
-            (rd.ActionFlags.GenMips, "GenMips"),
-            (rd.ActionFlags.PassBoundary, "PassBoundary"),
-            (rd.ActionFlags.Indexed, "Indexed"),
-            (rd.ActionFlags.Instanced, "Instanced"),
-            (rd.ActionFlags.Auto, "Auto"),
-            (rd.ActionFlags.Indirect, "Indirect"),
-            (rd.ActionFlags.ClearColor, "ClearColor"),
-            (rd.ActionFlags.ClearDepthStencil, "ClearDepthStencil"),
-            (rd.ActionFlags.BeginPass, "BeginPass"),
-            (rd.ActionFlags.EndPass, "EndPass"),
+            (rd.DrawFlags.Drawcall, "Drawcall"),
+            (rd.DrawFlags.Dispatch, "Dispatch"),
+            (rd.DrawFlags.Clear, "Clear"),
+            (rd.DrawFlags.PushMarker, "PushMarker"),
+            (rd.DrawFlags.PopMarker, "PopMarker"),
+            (rd.DrawFlags.SetMarker, "SetMarker"),
+            (rd.DrawFlags.Present, "Present"),
+            (rd.DrawFlags.Copy, "Copy"),
+            (rd.DrawFlags.Resolve, "Resolve"),
+            (rd.DrawFlags.GenMips, "GenMips"),
+            (rd.DrawFlags.PassBoundary, "PassBoundary"),
+            (rd.DrawFlags.Indexed, "Indexed"),
+            (rd.DrawFlags.Instanced, "Instanced"),
+            (rd.DrawFlags.Auto, "Auto"),
+            (rd.DrawFlags.Indirect, "Indirect"),
+            (rd.DrawFlags.ClearColor, "ClearColor"),
+            (rd.DrawFlags.ClearDepthStencil, "ClearDepthStencil"),
+            (rd.DrawFlags.BeginPass, "BeginPass"),
+            (rd.DrawFlags.EndPass, "EndPass"),
         ]
         for flag, name in flag_map:
             if flags & flag:
@@ -108,13 +108,13 @@ class Serializers:
             flags_filter_set = set(flags_filter)
 
         for action in actions:
-            name = action.GetName(structured_file)
+            name = action.name
             flags = action.flags
 
             # Check if this is a marker
-            is_push_marker = flags & rd.ActionFlags.PushMarker
-            is_set_marker = flags & rd.ActionFlags.SetMarker
-            is_pop_marker = flags & rd.ActionFlags.PopMarker
+            is_push_marker = flags & rd.DrawFlags.PushMarker
+            is_set_marker = flags & rd.DrawFlags.SetMarker
+            is_pop_marker = flags & rd.DrawFlags.PopMarker
             is_marker = is_push_marker or is_set_marker or is_pop_marker
 
             # 1. exclude_markers check - skip this marker and all its children
@@ -197,7 +197,7 @@ class Serializers:
                 flag_names = Serializers.serialize_flags(flags)
                 item = {
                     "event_id": action.eventId,
-                    "action_id": action.actionId,
+                    "action_id": action.drawcallId,
                     "name": name,
                     "flags": flag_names,
                     "num_indices": action.numIndices,

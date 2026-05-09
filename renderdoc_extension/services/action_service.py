@@ -1,4 +1,4 @@
-"""
+﻿"""
 Draw call / action operations service for RenderDoc.
 """
 
@@ -33,7 +33,7 @@ class ActionService:
         result = {"actions": []}
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
+            root_actions = controller.GetDrawcalls()
             structured_file = controller.GetStructuredFile()
             result["actions"] = Serializers.serialize_actions(
                 root_actions,
@@ -60,7 +60,7 @@ class ActionService:
         result = {"summary": None}
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
+            root_actions = controller.GetDrawcalls()
             structured_file = controller.GetStructuredFile()
             api = controller.GetAPIProperties().pipelineType
 
@@ -80,17 +80,17 @@ class ActionService:
                     total_actions[0] += 1
                     flags = action.flags
 
-                    if flags & rd.ActionFlags.Drawcall:
+                    if flags & rd.DrawFlags.Drawcall:
                         stats["draw_calls"] += 1
-                    if flags & rd.ActionFlags.Dispatch:
+                    if flags & rd.DrawFlags.Dispatch:
                         stats["dispatches"] += 1
-                    if flags & rd.ActionFlags.Clear:
+                    if flags & rd.DrawFlags.Clear:
                         stats["clears"] += 1
-                    if flags & rd.ActionFlags.Copy:
+                    if flags & rd.DrawFlags.Copy:
                         stats["copies"] += 1
-                    if flags & rd.ActionFlags.Present:
+                    if flags & rd.DrawFlags.Present:
                         stats["presents"] += 1
-                    if flags & (rd.ActionFlags.PushMarker | rd.ActionFlags.SetMarker):
+                    if flags & (rd.DrawFlags.PushMarker | rd.DrawFlags.SetMarker):
                         stats["markers"] += 1
 
                     if action.children:
@@ -101,10 +101,10 @@ class ActionService:
             # Top-level markers
             top_markers = []
             for action in root_actions:
-                if action.flags & rd.ActionFlags.PushMarker:
+                if action.flags & rd.DrawFlags.PushMarker:
                     child_count = Helpers.count_children(action)
                     top_markers.append({
-                        "name": action.GetName(structured_file),
+                        "name": action.name,
                         "event_id": action.eventId,
                         "child_count": child_count,
                     })
@@ -138,7 +138,7 @@ class ActionService:
             # Move to the event
             controller.SetFrameEvent(event_id, True)
 
-            action = self.ctx.GetAction(event_id)
+            action = self.ctx.GetDrawcall(event_id)
             if not action:
                 result["error"] = "No action at event %d" % event_id
                 return
@@ -147,8 +147,8 @@ class ActionService:
 
             details = {
                 "event_id": action.eventId,
-                "action_id": action.actionId,
-                "name": action.GetName(structured_file),
+                "action_id": action.drawcallId,
+                "name": action.name,
                 "flags": Serializers.serialize_flags(action.flags),
                 "num_indices": action.numIndices,
                 "num_instances": action.numInstances,
@@ -231,7 +231,7 @@ class ActionService:
 
             # Get structured file for action names
             structured_file = controller.GetStructuredFile()
-            root_actions = controller.GetRootActions()
+            root_actions = controller.GetDrawcalls()
 
             # Collect actions to report timings for
             timings = []
@@ -242,11 +242,11 @@ class ActionService:
                     parent_markers = []
 
                 for action in actions:
-                    action_name = action.GetName(structured_file)
+                    action_name = action.name
                     current_markers = parent_markers[:]
 
                     # Track marker hierarchy
-                    is_marker = bool(action.flags & (rd.ActionFlags.PushMarker | rd.ActionFlags.SetMarker))
+                    is_marker = bool(action.flags & (rd.DrawFlags.PushMarker | rd.DrawFlags.SetMarker))
                     if is_marker:
                         current_markers.append(action_name)
 

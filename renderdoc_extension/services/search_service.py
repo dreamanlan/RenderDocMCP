@@ -1,4 +1,4 @@
-"""
+﻿"""
 Reverse lookup search service for RenderDoc.
 """
 
@@ -27,14 +27,14 @@ class SearchService:
         result = {"matches": [], "scanned_draws": 0}
 
         def callback(controller):
-            root_actions = controller.GetRootActions()
+            root_actions = controller.GetDrawcalls()
             structured_file = controller.GetStructuredFile()
             all_actions = Helpers.flatten_actions(root_actions)
 
             # Filter to only draw calls and dispatches
             draw_actions = [
                 a for a in all_actions
-                if a.flags & (rd.ActionFlags.Drawcall | rd.ActionFlags.Dispatch)
+                if a.flags & (rd.DrawFlags.Drawcall | rd.DrawFlags.Dispatch)
             ]
             result["scanned_draws"] = len(draw_actions)
 
@@ -46,7 +46,7 @@ class SearchService:
                 if match_reason:
                     result["matches"].append({
                         "event_id": action.eventId,
-                        "name": action.GetName(structured_file),
+                        "name": action.name,
                         "match_reason": match_reason,
                     })
 
@@ -125,17 +125,16 @@ class SearchService:
 
             # Check render targets
             try:
-                om = pipe.GetOutputMerger()
-                if om:
-                    for i, rt in enumerate(om.renderTargets):
-                        if rt.resourceId != rd.ResourceId.Null():
-                            res_name = ""
-                            try:
-                                res_name = ctx.GetResourceName(rt.resourceId)
-                            except Exception:
-                                pass
-                            if res_name and texture_name.lower() in res_name.lower():
-                                return "RenderTarget[%d]: '%s'" % (i, res_name)
+                render_targets = pipe.GetOutputTargets()
+                for i, rt in enumerate(render_targets):
+                    if rt.resourceId != rd.ResourceId.Null():
+                        res_name = ""
+                        try:
+                            res_name = ctx.GetResourceName(rt.resourceId)
+                        except Exception:
+                            pass
+                        if res_name and texture_name.lower() in res_name.lower():
+                            return "RenderTarget[%d]: '%s'" % (i, res_name)
             except Exception:
                 pass
 
@@ -175,13 +174,13 @@ class SearchService:
 
             # Check render targets
             try:
-                om = pipe.GetOutputMerger()
-                if om:
-                    for i, rt in enumerate(om.renderTargets):
-                        if rt.resourceId == target_rid:
-                            return "RenderTarget[%d]" % i
-                    if om.depthTarget.resourceId == target_rid:
-                        return "DepthTarget"
+                render_targets = pipe.GetOutputTargets()
+                for i, rt in enumerate(render_targets):
+                    if rt.resourceId == target_rid:
+                        return "RenderTarget[%d]" % i
+                depth_target = pipe.GetDepthTarget()
+                if depth_target.resourceId == target_rid:
+                    return "DepthTarget"
             except Exception:
                 pass
 
