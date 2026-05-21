@@ -25,9 +25,15 @@ class RequestHandler:
             "get_buffer_contents": self._handle_get_buffer_contents,
             "get_texture_info": self._handle_get_texture_info,
             "get_texture_data": self._handle_get_texture_data,
+            "pick_pixel": self._handle_pick_pixel,
+            "save_texture": self._handle_save_texture,
+
             "get_pipeline_state": self._handle_get_pipeline_state,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
+            "get_postvs": self._handle_get_postvs,
+            "get_cbuffer_contents": self._handle_get_cbuffer_contents,
+            "execute_python": self._handle_execute_python,
         }
 
     def handle(self, request):
@@ -161,7 +167,47 @@ class RequestHandler:
         slice_idx = params.get("slice", 0)
         sample = params.get("sample", 0)
         depth_slice = params.get("depth_slice")  # None = full volume
-        return self.facade.get_texture_data(resource_id, mip, slice_idx, sample, depth_slice)
+        event_id = params.get("event_id")  # None = use current/last event
+        x = params.get("x")
+        y = params.get("y")
+        w = params.get("w")
+        h = params.get("h")
+        return self.facade.get_texture_data(resource_id, mip, slice_idx, sample, depth_slice, event_id, x, y, w, h)
+
+    def _handle_pick_pixel(self, params):
+        """Handle pick_pixel request"""
+        resource_id = params.get("resource_id")
+        if resource_id is None:
+            raise ValueError("resource_id is required")
+        x = params.get("x")
+        y = params.get("y")
+        if x is None or y is None:
+            raise ValueError("x and y are required")
+        mip = params.get("mip", 0)
+        slice_idx = params.get("slice", 0)
+        sample = params.get("sample", 0)
+        event_id = params.get("event_id")
+        type_cast = params.get("type_cast", "typeless")
+        return self.facade.pick_pixel(resource_id, int(x), int(y), mip, slice_idx, sample, event_id, type_cast)
+
+    def _handle_save_texture(self, params):
+        """Handle save_texture request"""
+        resource_id = params.get("resource_id")
+        if resource_id is None:
+            raise ValueError("resource_id is required")
+        file_path = params.get("file_path")
+        if file_path is None:
+            raise ValueError("file_path is required")
+        file_format = params.get("file_format", "png")
+        mip = params.get("mip", 0)
+        slice_idx = params.get("slice", 0)
+        sample = params.get("sample", 0)
+        event_id = params.get("event_id")
+        type_cast = params.get("type_cast", "typeless")
+        alpha_handling = params.get("alpha_handling", "preserve")
+        return self.facade.save_texture(resource_id, file_path, file_format, mip, slice_idx, sample, event_id, type_cast, alpha_handling)
+
+
 
     def _handle_get_pipeline_state(self, params):
         """Handle get_pipeline_state request"""
@@ -183,3 +229,42 @@ class RequestHandler:
         if capture_path is None:
             raise ValueError("capture_path is required")
         return self.facade.open_capture(capture_path)
+
+    def _handle_get_postvs(self, params):
+        """Handle get_postvs request"""
+        event_id = params.get("event_id")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        stage = params.get("stage", "VSOut")
+        instance = params.get("instance", 0)
+        view = params.get("view", 0)
+        first_vertex = params.get("first_vertex", 0)
+        num_vertices = params.get("num_vertices", 64)
+        parse_position = params.get("parse_position", True)
+        return self.facade.get_postvs(
+            int(event_id), stage, int(instance), int(view),
+            int(first_vertex), int(num_vertices), bool(parse_position)
+        )
+
+
+    def _handle_get_cbuffer_contents(self, params):
+        """Handle get_cbuffer_contents request"""
+        event_id = params.get("event_id")
+        if event_id is None:
+            raise ValueError("event_id is required")
+        stage = params.get("stage")
+        if stage is None:
+            raise ValueError("stage is required")
+        slot = params.get("slot", 0)
+        return self.facade.get_cbuffer_contents(int(event_id), stage, int(slot))
+
+    def _handle_execute_python(self, params):
+        """Handle execute_python request"""
+        code = params.get("code")
+        if code is None:
+            raise ValueError("code is required")
+        max_output = params.get("max_output")
+        if max_output is not None:
+            return self.facade.execute_python(code, int(max_output))
+        return self.facade.execute_python(code)
+

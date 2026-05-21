@@ -10,6 +10,7 @@ from .services import (
     SearchService,
     ResourceService,
     PipelineService,
+    ScriptService,
 )
 
 
@@ -40,6 +41,7 @@ class RenderDocFacade:
         self._search = SearchService(ctx, self._invoke)
         self._resource = ResourceService(ctx, self._invoke)
         self._pipeline = PipelineService(ctx, self._invoke)
+        self._script = ScriptService(ctx, self._invoke)
 
     def _invoke(self, callback):
         """Invoke callback on replay thread via BlockInvoke"""
@@ -122,9 +124,18 @@ class RenderDocFacade:
         """Get texture metadata"""
         return self._resource.get_texture_info(resource_id)
 
-    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None):
-        """Get texture pixel data"""
-        return self._resource.get_texture_data(resource_id, mip, slice, sample, depth_slice)
+    def get_texture_data(self, resource_id, mip=0, slice=0, sample=0, depth_slice=None, event_id=None, x=None, y=None, w=None, h=None):
+        """Get texture pixel data (optionally at a specific event_id)"""
+        return self._resource.get_texture_data(resource_id, mip, slice, sample, depth_slice, event_id, x, y, w, h)
+
+    def pick_pixel(self, resource_id, x, y, mip=0, slice=0, sample=0, event_id=None, type_cast="typeless"):
+        """Pick a single pixel value from a texture (cheap, bypasses bulk transfer)"""
+        return self._resource.pick_pixel(resource_id, x, y, mip, slice, sample, event_id, type_cast)
+    def save_texture(self, resource_id, file_path, file_format="png", mip=0, slice=0, sample=0, event_id=None, type_cast="typeless", alpha_handling="discard"):
+        """Save texture to disk as image file (bypasses MCP transport size limits)"""
+        return self._resource.save_texture(resource_id, file_path, file_format, mip, slice, sample, event_id, type_cast, alpha_handling)
+
+
 
     # ==================== Pipeline Operations ====================
 
@@ -135,3 +146,19 @@ class RenderDocFacade:
     def get_pipeline_state(self, event_id):
         """Get full pipeline state at an event"""
         return self._pipeline.get_pipeline_state(event_id)
+
+    def get_postvs(self, event_id, stage, instance, view, first_vertex, num_vertices, parse_position):
+        """Get Post-VS mesh data for a draw call"""
+        return self._pipeline.get_postvs(event_id, stage, instance, view, first_vertex, num_vertices, parse_position)
+
+    def get_cbuffer_contents(self, event_id, stage, slot=0):
+        """Get the contents of a single constant buffer at given event/stage/slot"""
+        return self._pipeline.get_cbuffer_contents(event_id, stage, slot)
+
+    # ==================== Script Execution ====================
+
+    def execute_python(self, code, max_output=None):
+        """Execute arbitrary Python code on the replay thread"""
+        return self._script.execute_python(code, max_output) if max_output else self._script.execute_python(code)
+
+
