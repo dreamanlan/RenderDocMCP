@@ -6,6 +6,8 @@ FastMCP 2.0 server providing access to RenderDoc capture data.
 from typing import Literal
 
 from fastmcp import FastMCP
+from fastmcp.exceptions import ToolError
+from functools import wraps
 
 from .bridge.client import RenderDocBridge, RenderDocBridgeError
 from .config import settings
@@ -19,7 +21,24 @@ mcp = FastMCP(
 bridge = RenderDocBridge(host=settings.renderdoc_host, port=settings.renderdoc_port)
 
 
+def bridge_tool(fn):
+    """
+    Wrap a tool function so that bridge/IPC errors are surfaced to the MCP client
+    as ToolError (with the real message) instead of a generic Internal Server Error.
+    """
+    @wraps(fn)
+    def wrapper(*args, **kwargs):
+        try:
+            return fn(*args, **kwargs)
+        except RenderDocBridgeError as e:
+            raise ToolError(f"RenderDoc bridge error: {e}")
+        except Exception as e:
+            raise ToolError(f"{type(e).__name__}: {e}")
+    return wrapper
+
+
 @mcp.tool
+@bridge_tool
 def get_capture_status() -> dict:
     """
     Check if a capture is currently loaded in RenderDoc.
@@ -29,6 +48,7 @@ def get_capture_status() -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def get_draw_calls(
     include_children: bool = True,
     marker_filter: str | None = None,
@@ -70,6 +90,7 @@ def get_draw_calls(
 
 
 @mcp.tool
+@bridge_tool
 def get_frame_summary() -> dict:
     """
     Get a summary of the current capture frame.
@@ -85,6 +106,7 @@ def get_frame_summary() -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def find_draws_by_shader(
     shader_name: str,
     stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"] | None = None,
@@ -105,6 +127,7 @@ def find_draws_by_shader(
 
 
 @mcp.tool
+@bridge_tool
 def find_draws_by_texture(texture_name: str) -> dict:
     """
     Find all draw calls using a texture with the given name (partial match).
@@ -119,6 +142,7 @@ def find_draws_by_texture(texture_name: str) -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def find_draws_by_resource(resource_id: str) -> dict:
     """
     Find all draw calls using a specific resource ID (exact match).
@@ -133,6 +157,7 @@ def find_draws_by_resource(resource_id: str) -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def get_draw_call_details(event_id: int) -> dict:
     """
     Get detailed information about a specific draw call.
@@ -146,6 +171,7 @@ def get_draw_call_details(event_id: int) -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def get_action_timings(
     event_ids: list[int] | None = None,
     marker_filter: str | None = None,
@@ -180,6 +206,7 @@ def get_action_timings(
 
 
 @mcp.tool
+@bridge_tool
 def get_shader_info(
     event_id: int,
     stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
@@ -197,6 +224,7 @@ def get_shader_info(
 
 
 @mcp.tool
+@bridge_tool
 def get_buffer_contents(
     resource_id: str,
     offset: int = 0,
@@ -219,6 +247,7 @@ def get_buffer_contents(
 
 
 @mcp.tool
+@bridge_tool
 def get_texture_info(resource_id: str) -> dict:
     """
     Get metadata about a texture resource.
@@ -232,12 +261,18 @@ def get_texture_info(resource_id: str) -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def get_texture_data(
     resource_id: str,
     mip: int = 0,
     slice: int = 0,
     sample: int = 0,
     depth_slice: int | None = None,
+    event_id: int | None = None,
+    x: int | None = None,
+    y: int | None = None,
+    w: int | None = None,
+    h: int | None = None,
 ) -> dict:
     """
     Read the pixel data of a texture resource.
@@ -250,17 +285,160 @@ def get_texture_data(
         sample: MSAA sample index (default: 0)
         depth_slice: For 3D textures only, extract a specific depth slice (default: None = full volume)
                      When specified, returns only the 2D slice at that depth index
-
+        event_id: If specified, switch replay to this event before reading the texture.
+                  CRITICAL for render targets reused across the frame (RT pool):
+                  without event_id, the data read is whatever the RT holds at the
+                  current/last replay event, which is often zero-cleared or
+                  overwritten by a later pass and therefore meaningless.
+                  Always pass the event_id of the draw/pass that *wrote* the RT
+                  you want to inspect. Default: None = use current/last event.
+        x: Crop region left coordinate in pixels at the requested mip level (default: None).
+           Must be specified together with y/w/h to enable cropping.
+        y: Crop region top coordinate in pixels at the requested mip level (default: None).
+        w: Crop region width in pixels (default: None).
+        h: Crop region height in pixels (default: None).
+           Crop notes:
+           - All four of x/y/w/h must be either all None (full mip, default behavior)
+             or all set (crop enabled). Partial set is rejected.
+           - Crop is NOT supported for compressed/block formats (e.g. BC*, ASTC, ETC);
+             read full mip in that case.
+           - For 3D textures, crop requires depth_slice to also be specified.
+           - Use crop to avoid timeouts/large payloads on big textures (e.g. 4K RTs).
+    
     Returns texture pixel data as base64-encoded bytes along with metadata
     including dimensions at the requested mip level and format information.
+    When cropping is enabled, width/height in the response are the cropped size,
+    and additional fields mip_width/mip_height (original mip size) and
+    crop_x/crop_y/crop_w/crop_h (the actual crop region used) are included.
     """
     params = {"resource_id": resource_id, "mip": mip, "slice": slice, "sample": sample}
     if depth_slice is not None:
         params["depth_slice"] = depth_slice
+    if event_id is not None:
+        params["event_id"] = event_id
+    for k, v in (("x", x), ("y", y), ("w", w), ("h", h)):
+        if v is not None:
+            params[k] = v
     return bridge.call("get_texture_data", params)
 
 
 @mcp.tool
+@bridge_tool
+def pick_pixel(
+    resource_id: str,
+    x: int,
+    y: int,
+    mip: int = 0,
+    slice: int = 0,
+    sample: int = 0,
+    event_id: int | None = None,
+    type_cast: str = "typeless",
+) -> dict:
+    """
+    Read a single pixel value from a texture (cheap, bypasses bulk data transfer).
+
+    Ideal for diagnosing per-pixel issues (e.g. black-screen analysis) when
+    the full texture is too large to ship through the MCP channel. Returns
+    the pixel in float/uint/sint interpretations so caller can pick whichever
+    matches the format semantics.
+
+    Args:
+        resource_id: The resource ID of the texture to sample
+        x, y: Pixel coordinates within the chosen mip level
+        mip: Mip level to sample (default: 0)
+        slice: Array slice or cube face index (default: 0)
+            For cube maps: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
+        sample: MSAA sample index (default: 0)
+        event_id: If specified, switch replay to this event before sampling.
+            CRITICAL for render targets reused across the frame (RT pool):
+            without event_id, you read whatever the RT holds at the
+            current/last replay event, which may be zero-cleared or
+            overwritten by a later pass. Always pass the event_id of the
+            draw/pass that wrote the RT you want to inspect. Default: None.
+        type_cast: How to interpret the raw bits. One of:
+            "typeless" (default, use resource's native format),
+            "float", "unorm", "snorm", "uint", "sint", "depth", "unorm_srgb".
+
+    Returns dict with float_value/uint_value/int_value (each 4 components),
+    plus resource format, mip dimensions, and echoed coordinates.
+    """
+    params = {
+        "resource_id": resource_id,
+        "x": x,
+        "y": y,
+        "mip": mip,
+        "slice": slice,
+        "sample": sample,
+        "type_cast": type_cast,
+    }
+    if event_id is not None:
+        params["event_id"] = event_id
+    return bridge.call("pick_pixel", params)
+
+
+@mcp.tool
+@bridge_tool
+def save_texture(
+    resource_id: str,
+    file_path: str,
+    file_format: str = "png",
+    mip: int = 0,
+    slice: int = 0,
+    sample: int = 0,
+    event_id: int | None = None,
+    type_cast: str = "typeless",
+    alpha_handling: str = "preserve",
+) -> dict:
+    """
+    Save a texture resource to an image file on disk (server-side write).
+
+    Avoids shipping large texture payloads through the MCP channel. Useful
+    when you need the actual pixels for off-line inspection (e.g. black-frame
+    analysis, comparing render targets across captures).
+
+    Args:
+        resource_id: The resource ID of the texture to save
+        file_path: Absolute path on the RenderDoc host where the image will be written
+        file_format: Output format. One of:
+            "png" (default), "jpg", "bmp", "tga", "hdr", "exr", "dds"
+        mip: Mip level to save (default: 0)
+        slice: Array slice or cube face index (default: 0)
+            For cube maps: 0=X+, 1=X-, 2=Y+, 3=Y-, 4=Z+, 5=Z-
+        sample: MSAA sample index (default: 0)
+        event_id: If specified, switch replay to this event before saving.
+            CRITICAL for render targets reused across the frame (RT pool):
+            without event_id you save whatever the RT holds at the
+            current/last replay event, which may be zero-cleared or
+            overwritten by a later pass. Always pass the event_id of the
+            draw/pass that wrote the RT you want to inspect. Default: None.
+        type_cast: How to interpret the raw bits. One of:
+            "typeless" (default, use resource's native format),
+            "float", "unorm", "snorm", "uint", "sint", "depth", "unorm_srgb".
+        alpha_handling: How to handle alpha channel for formats lacking
+            native alpha support (e.g. JPG/BMP). One of:
+            "preserve" (default, keep alpha if format supports it),
+            "discard", "blend_to_color", "blend_to_checkerboard".
+
+    Returns dict with success flag and saved file path.
+    """
+    params = {
+        "resource_id": resource_id,
+        "file_path": file_path,
+        "file_format": file_format,
+        "mip": mip,
+        "slice": slice,
+        "sample": sample,
+        "type_cast": type_cast,
+        "alpha_handling": alpha_handling,
+    }
+    if event_id is not None:
+        params["event_id"] = event_id
+    return bridge.call("save_texture", params)
+
+
+
+@mcp.tool
+@bridge_tool
 def get_pipeline_state(event_id: int) -> dict:
     """
     Get the full graphics pipeline state at a specific event.
@@ -279,8 +457,140 @@ def get_pipeline_state(event_id: int) -> dict:
     """
     return bridge.call("get_pipeline_state", {"event_id": event_id})
 
+@mcp.tool
+@bridge_tool
+def get_postvs(
+    event_id: int,
+    stage: str = "VSOut",
+    instance: int = 0,
+    view: int = 0,
+    first_vertex: int = 0,
+    num_vertices: int = 64,
+    parse_position: bool = True,
+) -> dict:
+    """
+    Get Post-VS (post vertex shader) mesh data for a draw call.
+
+    Useful for diagnosing geometry problems such as vertices collapsing to the
+    origin (e.g. UBO zero-fill causing LocalToWorld=0 -> all-black BasePass).
+
+    Args:
+        event_id: The event ID of the draw call
+        stage: Mesh data stage - "VSIn", "VSOut", "GSOut" (default "VSOut")
+        instance: Instance index for instanced draws (default 0)
+        view: View index for multiview rendering (default 0)
+        first_vertex: First vertex to read (default 0)
+        num_vertices: Number of vertices to read (default 64, capped by draw size)
+        parse_position: If True, parse SV_POSITION/POSITION attribute as float4
+                        and include a 'positions' array; also a 'zero_position_count'
+                        summary for quick diagnosis (default True)
+
+    Returns:
+        dict with mesh metadata (vertex/index buffer info, attribute layout),
+        raw vertex bytes (base64) and, when parse_position=True, decoded
+        position values plus zero-position statistics.
+    """
+    return bridge.call(
+        "get_postvs",
+        {
+            "event_id": event_id,
+            "stage": stage,
+            "instance": instance,
+            "view": view,
+            "first_vertex": first_vertex,
+            "num_vertices": num_vertices,
+            "parse_position": parse_position,
+        },
+    )
+
+
 
 @mcp.tool
+@bridge_tool
+def get_cbuffer_contents(
+    event_id: int,
+    stage: Literal["vertex", "hull", "domain", "geometry", "pixel", "compute"],
+    slot: int = 0,
+) -> dict:
+    """
+    Get the contents of a single constant buffer (UBO) at a given event/stage/slot.
+
+    Targeted accessor with smaller payload than get_pipeline_state/get_shader_info,
+    which only return cbuffer metadata as a sub-field. Ideal for diagnosing
+    UBO-related issues such as zero-filled BatchedPrimitive UBO (vb2, 16384B)
+    causing LocalToWorld=0 -> vertices collapsing to origin -> all-black BasePass.
+
+    Args:
+     event_id: The event ID of the draw call to inspect
+     stage: Shader stage owning the cbuffer (vertex, hull, domain, geometry, pixel, compute)
+     slot: API real binding point of the cbuffer (default: 0). This is the
+      same value as cbuffer.slot returned by get_pipeline_state, i.e.
+      the GL UBO binding / D3D cb register / Vulkan binding. Pass -1
+      to access non-buffer-backed default uniform block (e.g. GL
+      $Globals). The internal shader-reflection index is auto-resolved
+      via BindpointMapping.
+
+    Returns:
+     dict with 'cbuffer' (name, slot, reflection_index, buffer_backed,
+     size, variables tree of name/type/value, bound flag, optional
+     resource_id/byte_offset/byte_size) and 'error' (str or None).
+     'variables' is a serialized tree suitable for direct inspection.
+    """
+    return bridge.call(
+     "get_cbuffer_contents",
+        {"event_id": event_id, "stage": stage, "slot": slot},
+    )
+
+
+
+@mcp.tool
+@bridge_tool
+def execute_python(
+    code: str,
+    max_output: int | None = None,
+) -> dict:
+    """
+    Execute arbitrary Python code inside RenderDoc's replay thread.
+
+    Escape hatch for queries not covered by dedicated tools. Runs as a
+    privileged plugin (no sandbox) on the RenderDoc host; use responsibly.
+
+    Available names in the user code:
+        controller   - ReplayController bound to the current event.
+        pyrenderdoc  - qrenderdoc.CaptureContext (high-level UI/capture context).
+        rd           - renderdoc module (low-level types, enums, ResourceId, etc.).
+        qrd          - qrenderdoc module (may be None if not importable).
+        result       - assign here to return a value (default None).
+
+    Args:
+        code: Python source string (compiled with exec).
+        max_output: Max bytes for stdout / stderr / serialized result.
+                    Default 65536 (64 KB). Long outputs are head+tail truncated.
+
+    Returns dict with:
+        success: bool - True if exec completed without exception.
+        result:  JSON-safe value assigned to `result` (or its string form
+                 if not JSON-serializable). May be truncated.
+        stdout:  captured stdout text (truncated if oversize).
+        stderr:  captured stderr text (truncated if oversize).
+        error:   traceback string if exec raised (else absent / empty).
+        truncated: {result: bool, stdout: bool, stderr: bool}.
+
+    Notes:
+        - Runs via BlockInvoke on the replay thread; long-running or
+          infinite-loop code will hang RenderDoc until killed.
+        - No timeout is enforced. Keep snippets short and bounded.
+        - A capture must be loaded.
+    """
+    params: dict[str, object] = {"code": code}
+    if max_output is not None:
+        params["max_output"] = max_output
+    return bridge.call("execute_python", params)
+
+
+
+@mcp.tool
+@bridge_tool
 def list_captures(directory: str) -> dict:
     """
     List all RenderDoc capture files (.rdc) in the specified directory.
@@ -298,6 +608,7 @@ def list_captures(directory: str) -> dict:
 
 
 @mcp.tool
+@bridge_tool
 def open_capture(capture_path: str) -> dict:
     """
     Open a RenderDoc capture file (.rdc).
@@ -313,7 +624,38 @@ def open_capture(capture_path: str) -> dict:
 
 def main():
     """Run the MCP server"""
-    mcp.run()
+    import logging
+    import sys
+    import os
+    import traceback
+
+    log_dir = r"D:/temp"
+    try:
+        os.makedirs(log_dir, exist_ok=True)
+    except Exception:
+        pass
+    log_path = os.path.join(log_dir, "renderdoc_mcp.log")
+
+    logging.basicConfig(
+        level=logging.DEBUG,
+        filename=log_path,
+        filemode="a",
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    )
+    root_logger = logging.getLogger()
+    root_logger.info("===== renderdoc-mcp main() entered, pid=%s, argv=%s",
+                     os.getpid(), sys.argv)
+
+    def _excepthook(exctype, value, tb):
+        root_logger.error("uncaught exception:\n%s",
+                          "".join(traceback.format_exception(exctype, value, tb)))
+    sys.excepthook = _excepthook
+
+    try:
+        mcp.run()
+    except BaseException:
+        root_logger.exception("mcp.run() raised")
+        raise
 
 
 if __name__ == "__main__":

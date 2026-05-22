@@ -37,7 +37,7 @@ def install():
     ext_dir = get_extension_dir()
     ext_dir.mkdir(parents=True, exist_ok=True)
 
-    dest = ext_dir / "renderdoc_mcp_bridge"
+    dest = ext_dir / "renderdoc_mcp_bridge_120_up"
 
     # Remove existing installation
     if dest.exists():
@@ -60,7 +60,7 @@ def install():
 def uninstall():
     """Uninstall the extension"""
     ext_dir = get_extension_dir()
-    dest = ext_dir / "renderdoc_mcp_bridge"
+    dest = ext_dir / "renderdoc_mcp_bridge_120_up"
 
     if dest.exists():
         shutil.rmtree(dest)
