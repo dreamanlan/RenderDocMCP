@@ -313,3 +313,94 @@ class ActionService:
         if result["error"]:
             raise ValueError(result["error"])
         return result["data"]
+
+    def get_api_events(
+        self,
+        event_id_min=None,
+        event_id_max=None,
+        name_filter=None,
+    ):
+        """
+        Get API-level events (GL/Vulkan/D3D calls) from the structured file.
+
+        Unlike get_draw_calls which only returns action-level events (draw, dispatch,
+        clear, marker), this returns the raw API calls recorded in the capture,
+        such as glShaderStorageBlockBinding, glBindBufferRange, glUseProgram, etc.
+
+        Args:
+            event_id_min: Only include events with chunk index >= this value.
+            event_id_max: Only include events with chunk index <= this value.
+            name_filter: Only include events whose name contains this string (case-insensitive).
+
+        Returns:
+            Dictionary with:
+            - events: List of {index, name, num_children, children_summary}
+            - count: Number of matching events
+            - total_chunks: Total chunks in structured file
+        """
+        if not self.ctx.IsCaptureLoaded():
+            raise ValueError("No capture loaded")
+
+        result = {"data": None}
+
+        def callback(controller):
+            structured_file = controller.GetStructuredFile()
+            chunks = structured_file.chunks
+
+            events = []
+            total_chunks = len(chunks)
+            name_filter_lower = name_filter.lower() if name_filter else None
+
+            for i in range(total_chunks):
+                # Apply range filter
+                if event_id_min is not None and i < event_id_min:
+                    continue
+                if event_id_max is not None and i > event_id_max:
+                    break
+
+                chunk = chunks[i]
+                chunk_name = chunk.name
+
+                # Apply name filter
+                if name_filter_lower and name_filter_lower not in chunk_name.lower():
+                    continue
+
+                event_info = {
+                    "index": i,
+                    "name": chunk_name,
+                }
+
+                # Include child data (parameters) summary
+                if chunk.NumChildren() > 0:
+                    children_summary = []
+                    for ci in range(chunk.NumChildren()):
+                        child = chunk.GetChild(ci)
+                        child_info = {"name": child.name, "type": str(child.type.name)}
+                        # Try to get the value for simple types
+                        try:
+                            if child.type.basetype == rd.SDBasic.Struct:
+                                child_info["value"] = "<struct with %d members>" % child.NumChildren()
+                            elif child.NumChildren() > 0:
+                                # Array or complex type
+                                child_info["value"] = "<array with %d elements>" % child.NumChildren()
+                            else:
+                                # Simple value - try to get string representation
+                                val = child.data.str
+                                if val:
+                                    child_info["value"] = val
+                        except Exception:
+                            pass
+                        children_summary.append(child_info)
+                    event_info["parameters"] = children_summary
+
+                events.append(event_info)
+
+            result["data"] = {
+                "events": events,
+                "count": len(events),
+                "total_chunks": total_chunks,
+            }
+
+        self._invoke(callback)
+        return result["data"]
+
