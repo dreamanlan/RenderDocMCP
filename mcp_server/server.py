@@ -205,6 +205,37 @@ def get_action_timings(
     return bridge.call("get_action_timings", params)
 
 
+
+@mcp.tool
+@bridge_tool
+def get_api_events(
+    event_id_min: int | None = None,
+    event_id_max: int | None = None,
+    name_filter: str | None = None,
+) -> dict:
+    """
+    Get API-level events (raw GL/Vulkan/D3D calls) from the structured file.
+
+    Unlike get_draw_calls which returns action-level events (draw, dispatch,
+    clear, marker), this returns the raw API calls recorded in the capture,
+    such as glShaderStorageBlockBinding, glBindBufferRange, glUseProgram, etc.
+
+    Args:
+        event_id_min: Only include events with chunk index >= this value
+        event_id_max: Only include events with chunk index <= this value
+        name_filter: Only include events whose name contains this string (case-insensitive)
+
+    Returns a list of API events with their parameters.
+    """
+    params: dict[str, object] = {}
+    if event_id_min is not None:
+        params["event_id_min"] = event_id_min
+    if event_id_max is not None:
+        params["event_id_max"] = event_id_max
+    if name_filter is not None:
+        params["name_filter"] = name_filter
+    return bridge.call("get_api_events", params)
+
 @mcp.tool
 @bridge_tool
 def get_shader_info(

@@ -100,6 +100,15 @@ class RenderDocFacade:
             exclude_markers=exclude_markers,
         )
 
+
+    def get_api_events(self, event_id_min=None, event_id_max=None, name_filter=None):
+        """Get API-level events from the structured file"""
+        return self._action.get_api_events(
+            event_id_min=event_id_min,
+            event_id_max=event_id_max,
+            name_filter=name_filter,
+        )
+
     # ==================== Search Operations ====================
 
     def find_draws_by_shader(self, shader_name, stage=None):

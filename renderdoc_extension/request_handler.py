@@ -27,13 +27,13 @@ class RequestHandler:
             "get_texture_data": self._handle_get_texture_data,
             "pick_pixel": self._handle_pick_pixel,
             "save_texture": self._handle_save_texture,
-
             "get_pipeline_state": self._handle_get_pipeline_state,
             "list_captures": self._handle_list_captures,
             "open_capture": self._handle_open_capture,
             "get_postvs": self._handle_get_postvs,
             "get_cbuffer_contents": self._handle_get_cbuffer_contents,
             "execute_python": self._handle_execute_python,
+            "get_api_events": self._handle_get_api_events,
         }
 
     def handle(self, request):
@@ -268,3 +268,13 @@ class RequestHandler:
             return self.facade.execute_python(code, int(max_output))
         return self.facade.execute_python(code)
 
+    def _handle_get_api_events(self, params):
+        """Handle get_api_events request"""
+        event_id_min = params.get("event_id_min")
+        event_id_max = params.get("event_id_max")
+        name_filter = params.get("name_filter")
+        return self.facade.get_api_events(
+            event_id_min=event_id_min,
+            event_id_max=event_id_max,
+            name_filter=name_filter,
+        )
